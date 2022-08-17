@@ -1,3 +1,6 @@
+// Export ZFS metrics obtained from the kernel as Prometheus metrics.
+// Metrics may be reported for just pools, for pools and top level
+// vdevs, or for pools, vdevs, and disks.
 package main
 
 import (
@@ -6,6 +9,7 @@ import (
 	"log"
 	"math"
 	"net/http"
+	"path/filepath"
 	"strconv"
 
 	"git.dolansoft.org/lorenz/go-zfs/ioctl"
@@ -15,6 +19,8 @@ import (
 
 var (
 	listenAddr = flag.String("listen-addr", ":9700", "Address the ZFS exporter should listen on")
+	vdevDepth  = flag.Int("depth", 1, "Depth of the vdev tree to report on. 0 is the pool, 1 is top level vdevs, 2 is devices too")
+	fullPath   = flag.Bool("fullpath", false, "Report the full path of disks")
 )
 
 type stat struct {
@@ -90,7 +96,7 @@ var scanStats = []stat{
 }
 
 var (
-	extendedStatsLabels = []string{"type", "vdev", "zpool"}
+	extendedStatsLabels = []string{"type", "vdev", "zpool", "path"}
 )
 
 // ZFS IO statistics don't include histograms of physical disk IO.
@@ -180,9 +186,9 @@ func init() {
 			continue
 		}
 		if len(s.variants) == 0 {
-			vdevStats[i].desc = prometheus.NewDesc("zfs_vdev_"+s.n, "ZFS VDev "+s.d, []string{"vdev", "zpool"}, nil)
+			vdevStats[i].desc = prometheus.NewDesc("zfs_vdev_"+s.n, "ZFS VDev "+s.d, []string{"vdev", "zpool", "path"}, nil)
 		} else {
-			vdevStats[i].desc = prometheus.NewDesc("zfs_vdev_"+s.n, "ZFS VDev "+s.d, []string{"vdev", "zpool", s.dimension}, nil)
+			vdevStats[i].desc = prometheus.NewDesc("zfs_vdev_"+s.n, "ZFS VDev "+s.d, []string{"vdev", "zpool", "path", s.dimension}, nil)
 		}
 	}
 	for i, s := range scanStats {
@@ -220,6 +226,127 @@ func (c *zfsCollector) Describe(ch chan<- *prometheus.Desc) {
 	ch <- poolConfigTxg
 }
 
+// vdevName generates the name for the vdev= label.
+// This, *plus* the path of the vdev, must be unique.
+// A normal top-level vdev has a name of '<type>-<id>'.
+// A top-level disk has a name of 'disk-<id>'.
+// A nested vdev, which you can get while resilvering,
+// has a name of '<parent>/<type>-<id>', eg
+// "mirror-1/...".
+// A disk nested inside a parent vdev has the vdev name
+// of the parent; it will be distinguished based on the
+// path= label.
+//
+// In OpenZFS, this is done by the libzfs function
+// zpool_vdev_name(), which has somewhat more complex
+// rules that are intended to provide more human friendly
+// names. We may at some time immitate its naming, so that
+// we generate names like 'raidz2-0' instead of 'raidz-0'.
+// (dRAID is even more complicated.)
+func vdevName(parent string, vdev map[string]interface{}) string {
+	typ := vdev["type"].(string)
+	if typ == "disk" && parent != "" {
+		return parent
+	}
+	if parent != "" {
+		parent = parent + "/"
+	}
+	// TODO: This doesn't always seem to match what zpool shows
+	return fmt.Sprintf("%s%s-%d", parent, vdev["type"], vdev["id"])
+}
+
+// reportVdevStats reports on 'vdev' stats, both basic and extended.
+// Vdevs, the pool, and individual devices all have vdev stats, but
+// not all stats are valid for all types. We report anything that
+// actually exists in the data. Stats that are inapplicable for a type
+// are generally 0, and Prometheus is quite efficient at storing constant
+// data.
+//
+// We report a non-blank path label for anything that has
+// one. Normally this is physical disks. Otherwise, the vdev type is
+// implicit in its name, eg "mirror-0" is a mirror. Physical disks
+// have the vdev name of their parent vdev.
+func reportVdevStats(poolName, vdevName string, vdev map[string]interface{}, ch chan<- prometheus.Metric) {
+	rawStats := vdev["vdev_stats"].([]uint64)
+	path, ok := vdev["path"].(string)
+	if !ok {
+		path = ""
+	} else if !*fullPath {
+		path = filepath.Base(path)
+	}
+
+	// vdevStats entries with variants actually cover (and
+	// consume) multiple raw stats, forcing us to avoid
+	// the simple iteration approach.
+	i := 0
+	for _, s := range vdevStats {
+		if i >= len(rawStats) {
+			break
+		}
+		if s.n == "" {
+			i++
+			continue
+		}
+		if len(s.variants) == 0 {
+			ch <- prometheus.MustNewConstMetric(s.desc, prometheus.UntypedValue, float64(rawStats[i]), vdevName, poolName, path)
+			i++
+		} else {
+			for _, v := range s.variants {
+				ch <- prometheus.MustNewConstMetric(s.desc, prometheus.UntypedValue, float64(rawStats[i]), vdevName, poolName, path, v)
+				i++
+			}
+		}
+	}
+	extended_stats := vdev["vdev_stats_ex"].(map[string]interface{})
+	for name, val := range extended_stats {
+		statMeta := extStatsMap[name]
+		if statMeta.name == "" {
+			continue
+		}
+		if scalar, ok := val.(uint64); ok {
+			ch <- prometheus.MustNewConstMetric(statMeta.desc, prometheus.GaugeValue, float64(scalar), statMeta.label, vdevName, poolName, path)
+		} else if histo, ok := val.([]uint64); ok {
+			buckets := make(map[float64]uint64)
+			var count uint64
+			var acc float64
+			var divisor float64 = 1.0
+			if len(histo) == 37 {
+				divisor = 1_000_000_000 // 1 ns in s
+			}
+			for i, v := range histo {
+				count += v
+				buckets[math.Exp2(float64(i))/divisor] = count
+				midpoint := (1 << i) + ((1 << i) / 2)
+				// This mimics the calculation that
+				// 'zpool iostat' does. We can't do
+				// any better because the raw sum
+				// information isn't exported by ZFS.
+				acc += float64(v) * float64(midpoint)
+			}
+			// <cks>: the upstream version punts on an
+			// accumulated value (and calls the count
+			// 'acc', just to fool you).
+			ch <- prometheus.MustNewConstHistogram(statMeta.desc, count, acc/divisor, buckets, statMeta.label, vdevName, poolName, path)
+		} else {
+			log.Fatalf("invalid type encountered: %T", val)
+		}
+	}
+}
+
+func descendVdev(poolName, parent string, vdev map[string]interface{}, ch chan<- prometheus.Metric) {
+	chld := vdev["children"]
+	if chld == nil {
+		return
+	}
+	kids := chld.([]map[string]interface{})
+	ch <- prometheus.MustNewConstMetric(vdevChildren, prometheus.GaugeValue, float64(len(kids)), parent, poolName)
+	for _, v := range kids {
+		vdn := vdevName(parent, v)
+		reportVdevStats(poolName, vdn, v, ch)
+		descendVdev(poolName, vdn, v, ch)
+	}
+}
+
 func (c *zfsCollector) Collect(ch chan<- prometheus.Metric) {
 	pools, err := ioctl.PoolConfigs()
 	if err != nil {
@@ -244,51 +371,13 @@ func (c *zfsCollector) Collect(ch chan<- prometheus.Metric) {
 
 		vdevTree := stats["vdev_tree"].(map[string]interface{})
 		vdevs := vdevTree["children"].([]map[string]interface{})
-		for _, vdev := range vdevs {
-			// TODO: This doesn't always seem to match what zpool shows
-			vdevName := fmt.Sprintf("%s-%d", vdev["type"], vdev["id"])
-			rawStats := vdev["vdev_stats"].([]uint64)
-			i := 0
-			for _, s := range vdevStats {
-				if i >= len(rawStats) {
-					break
-				}
-				if s.n == "" {
-					i++
-					continue
-				}
-				if len(s.variants) == 0 {
-					ch <- prometheus.MustNewConstMetric(s.desc, prometheus.UntypedValue, float64(rawStats[i]), vdevName, poolName)
-					i++
-				} else {
-					for _, v := range s.variants {
-						ch <- prometheus.MustNewConstMetric(s.desc, prometheus.UntypedValue, float64(rawStats[i]), vdevName, poolName, v)
-						i++
-					}
-				}
-			}
-			extended_stats := vdev["vdev_stats_ex"].(map[string]interface{})
-			for name, val := range extended_stats {
-				statMeta := extStatsMap[name]
-				if statMeta.name == "" {
-					continue
-				}
-				if scalar, ok := val.(uint64); ok {
-					ch <- prometheus.MustNewConstMetric(statMeta.desc, prometheus.GaugeValue, float64(scalar), statMeta.label, vdevName, poolName)
-				} else if histo, ok := val.([]uint64); ok {
-					buckets := make(map[float64]uint64)
-					var acc uint64
-					var divisor float64 = 1.0
-					if len(histo) == 37 {
-						divisor = 1_000_000_000 // 1 ns in s
-					}
-					for i, v := range histo {
-						acc += v
-						buckets[math.Exp2(float64(i))/divisor] = acc
-					}
-					ch <- prometheus.MustNewConstHistogram(statMeta.desc, acc, 0.0, buckets, statMeta.label, vdevName, poolName)
-				} else {
-					log.Fatalf("invalid type encountered: %T", val)
+		reportVdevStats(poolName, "root", vdevTree, ch)
+		if *vdevDepth > 0 {
+			for _, vdev := range vdevs {
+				vdn := vdevName("", vdev)
+				reportVdevStats(poolName, vdn, vdev, ch)
+				if *vdevDepth > 1 {
+					descendVdev(poolName, vdn, vdev, ch)
 				}
 			}
 		}
