@@ -61,6 +61,9 @@ var vdevStats = []stat{
 	{n: "ashift_configured", d: "configured ashift"},
 	{n: "ashift_logical", d: "logical ashift"},
 	{n: "ashfit_physical", d: "physical ashift"},
+	// Added in 2021 and 2022.
+	{n: "noalloc_status", d: "allocations halted?"},
+	{n: "physical_capacity_bytes", d: "physical capacity"},
 }
 
 var (
