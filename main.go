@@ -152,6 +152,13 @@ var extStats = []extStat{
 	{"vdev_tot_r_lat_histo", zioLatencyTotal, "read"},
 	{"vdev_tot_w_lat_histo", zioLatencyTotal, "write"},
 	{"vdev_trim_histo", queueLatency, "trim"},
+
+	// These are in the ZoL development version as of 2022-07.
+	{"vdev_rebuild_active_queue", activeQueueLength, "rebuild"},
+	{"vdev_rebuild_pend_queue", pendingQueueLength, "rebuild"},
+	{"vdev_ind_rebuild_histo", individualIOSize, "rebuild"},
+	{"vdev_agg_rebuild_histo", aggregatedIOSize, "rebuild"},
+	{"vdev_rebuild_histo", queueLatency, "rebuild"},
 }
 
 func init() {
