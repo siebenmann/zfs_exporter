@@ -350,9 +350,17 @@ func reportVdevStats(poolName, vdevName string, vdev map[string]interface{}, ch 
 			var count uint64
 			var acc float64
 			var divisor float64 = 1.0
+			// All time based histograms have 37 buckets and
+			// count time in nanoseconds. Other types of
+			// histograms don't (currently) have 37 buckets.
 			if len(histo) == 37 {
 				divisor = 1_000_000_000 // 1 ns in s
 			}
+			// Since ZFS doesn't provide a true sum of
+			// histograms, we compute one ourselves using
+			// the same approach as 'zpool iostat' in
+			// order to make histogram metrics more
+			// useful.
 			for i, v := range histo {
 				count += v
 				buckets[math.Exp2(float64(i))/divisor] = count
@@ -363,9 +371,6 @@ func reportVdevStats(poolName, vdevName string, vdev map[string]interface{}, ch 
 				// information isn't exported by ZFS.
 				acc += float64(v) * float64(midpoint)
 			}
-			// <cks>: the upstream version punts on an
-			// accumulated value (and calls the count
-			// 'acc', just to fool you).
 			ch <- prometheus.MustNewConstHistogram(statMeta.desc, count, acc/divisor, buckets, statMeta.label, vdevName, poolName, path)
 		} else {
 			log.Fatalf("invalid type encountered: %T", val)
