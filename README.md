@@ -23,4 +23,4 @@ https://utcc.utoronto.ca/~cks/space/blog/solaris/ZFSIndividualVsAggregatedIOs
 
 The vdev names for raidz and draid vdevs don't yet match the libzfs code, as libzfs includes the raidz level and various draid details in the name and this code does not yet do so. In general this code has been used and tested only on mirror vdevs, because that's our case here.
 
-To make full use of ZFS metrics on modern OpenZFS, you'll need both this exporter and a version of (node_exporter)[https://github.com/prometheus/node_exporter] that has been patched to properly handle that current OpenZFS doesn't have the old basic pool iostats any more, so that you get per-dataset stats and other basic ZFS pool information.
+To make full use of ZFS metrics on modern OpenZFS, you'll need both this exporter and a version of [node_exporter](https://github.com/prometheus/node_exporter) that has been patched to properly handle that current OpenZFS doesn't have the old basic pool iostats any more, so that you get per-dataset stats and other basic ZFS pool information.
