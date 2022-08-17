@@ -221,7 +221,10 @@ func (c *zfsCollector) Collect(ch chan<- prometheus.Metric) {
 }
 
 func main() {
-	ioctl.Init("")
+	err := ioctl.Init("")
+	if err != nil {
+		log.Fatalf("ioctl.Init failed: %v", err)
+	}
 
 	c := zfsCollector{}
 	prometheus.MustRegister(&c)
