@@ -66,6 +66,28 @@ var vdevStats = []stat{
 	{n: "physical_capacity_bytes", d: "physical capacity"},
 }
 
+// <cks>: this is struct pool_scan_stat.
+// TODO: should we create a derived statistic for the last scan duration,
+// when the scan state is 2? It's not necessarily easy to get it otherwise.
+var scanStats = []stat{
+	{n: "scan_func", d: "Pool scan function: 0 none, 1 scrub, 2 resilver, 3 rebuild (maybe)"},
+	{n: "scan_state", d: "Pool scan state: 0 none, 1 scanning, 2 finished, 3 cancelled"},
+	{n: "scan_start_time_seconds", d: "Pool scan start time"},
+	{n: "scan_end_time_seconds", d: "Pool scan end time"},
+	{n: "scan_to_examine_bytes", d: "Total bytes to scan"},
+	{n: "scan_examined_bytes", d: "Total bytes examined"},
+	{n: "scan_to_process_bytes", d: "Total bytes to process"},
+	{n: "scan_processed_bytes", d: "Total bytes processed"},
+	{n: "scan_errors", d: "Scan errors"},
+	// values not stored on disk.
+	{n: "scan_pass_examined_bytes", d: "Examined bytes per scan pass"},
+	{n: "scan_pass_start_seconds", d: "Start time of a scan pass"},
+	{n: "scan_scrub_pause", d: "Pause time of a scrub pass"},
+	{n: "scan_scrub_pause_time_spent", d: "Cumulative time the scrub spent paused"},
+	{n: "scan_pass_issued_bytes", d: "Issued bytes per scan pass"},
+	{n: "scan_issued_bytes", d: "Total bytes checked by scanner"},
+}
+
 var (
 	extendedStatsLabels = []string{"type", "vdev", "zpool"}
 )
@@ -143,6 +165,9 @@ func init() {
 			vdevStats[i].desc = prometheus.NewDesc("zfs_vdev_"+s.n, "ZFS VDev "+s.d, []string{"vdev", "zpool", s.dimension}, nil)
 		}
 	}
+	for i, s := range scanStats {
+		scanStats[i].desc = prometheus.NewDesc("zfs_pool_"+s.n, "ZFS Pool Scan "+s.d, []string{"zpool"}, nil)
+	}
 	extStatsMap = make(map[string]extStat)
 	for _, v := range extStats {
 		extStatsMap[v.name] = v
@@ -156,6 +181,9 @@ func (c *zfsCollector) Describe(ch chan<- *prometheus.Desc) {
 		if s.n == "" {
 			continue
 		}
+		ch <- s.desc
+	}
+	for _, s := range scanStats {
 		ch <- s.desc
 	}
 	ch <- activeQueueLength
@@ -225,6 +253,18 @@ func (c *zfsCollector) Collect(ch chan<- prometheus.Metric) {
 				} else {
 					log.Fatalf("invalid type encountered: %T", val)
 				}
+			}
+		}
+
+		// Report pool scan stats.
+		if vdevTree["scan_stats"] != nil {
+			rawStats := vdevTree["scan_stats"].([]uint64)
+			for i, s := range scanStats {
+				if i >= len(rawStats) {
+					break
+				}
+				// We know for sure that these are all gauges.
+				ch <- prometheus.MustNewConstMetric(s.desc, prometheus.GaugeValue, float64(rawStats[i]), poolName)
 			}
 		}
 	}
