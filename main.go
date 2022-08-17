@@ -232,19 +232,20 @@ func (c *zfsCollector) Describe(ch chan<- *prometheus.Desc) {
 // This, *plus* the path of the vdev, must be unique.
 // A normal top-level vdev has a name of '<type>-<id>'.
 // A top-level disk has a name of 'disk-<id>'.
+// A top-level file has a name of 'file-<id>'.
 // A nested vdev, which you can get while resilvering,
 // has a name of '<parent>/<type>-<id>', eg
 // "mirror-1/...".
-// A disk nested inside a parent vdev has the vdev name
-// of the parent; it will be distinguished based on the
-// path= label.
+// A disk or file nested inside a parent vdev has the vdev
+// name of the parent; it will be distinguished based on
+// the path= label.
 //
+// For raidz and draid vdevs, we attempt to match the
+// names that OpenZFS reports in 'zpool status'.
 // In OpenZFS, this is done by the libzfs function
-// zpool_vdev_name(), which has somewhat more complex
+// zpool_vdev_name(), which has somewhat complex
 // rules that are intended to provide more human friendly
-// names. We may at some time immitate its naming, so that
-// we generate names like 'raidz2-0' instead of 'raidz-0'.
-// (dRAID is even more complicated.)
+// names.
 func vdevName(parent string, vdev map[string]interface{}) string {
 	typ := vdev["type"].(string)
 	if (typ == "disk" || typ == "file") && parent != "" {
@@ -253,8 +254,31 @@ func vdevName(parent string, vdev map[string]interface{}) string {
 	if parent != "" {
 		parent = parent + "/"
 	}
-	// TODO: This doesn't always seem to match what zpool shows
-	return fmt.Sprintf("%s%s-%d", parent, vdev["type"], vdev["id"])
+	vid := vdev["id"]
+	// Attempt to immitate OpenZFS's naming of vdevs. This may be
+	// a mistake, but so it goes.
+	switch typ {
+	case "raidz":
+		// raidz vdev names include the parity level
+		nparity := vdev["nparity"]
+		return fmt.Sprintf("%s%s%d-%d", parent, typ, nparity, vid)
+
+	case "draid":
+		// draid vdev names are excessively complicated. See
+		// https://openzfs.github.io/openzfs-docs/Basic%20Concepts/dRAID%20Howto.html#create-a-draid-vdev
+		nparity := vdev["nparity"]
+		ndata := vdev["draid_ndata"]
+		nspares := vdev["draid_nspares"]
+		children := vdev["children"].([]map[string]interface{})
+		return fmt.Sprintf("%s%s%d:%dd:%dc:%ds-%d", parent, typ, nparity, ndata, len(children), nspares, vid)
+
+	default:
+		// For "mirror", "root", "disk", "file", and anything
+		// we don't recognize. This should be unique with
+		// type and the ID number, even if it doesn't match
+		// 'zpool status' output.
+		return fmt.Sprintf("%s%s-%d", parent, typ, vid)
+	}
 }
 
 // reportVdevStats reports on 'vdev' stats, both basic and extended.
