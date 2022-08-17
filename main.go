@@ -50,7 +50,7 @@ var vdevStats = []stat{
 	{n: "initialize_action_time", d: "initialize time"},
 	{n: "checkpoint_space_bytes", d: "checkpoint space in bytes"},
 	{n: "resilver_deferred", d: "resilver deferred"},
-	{n: "slow_ios", d: "slow I/O operations"},
+	{n: "slow_ios", d: "slow I/O operations (30 seconds or more to complete)"},
 	{n: "trim_errors", d: "trim errors"},
 	{n: "trim_unsupported", d: "doesn't support TRIM"},
 	{n: "trim_processed_bytes", d: "TRIMmed bytes"},
