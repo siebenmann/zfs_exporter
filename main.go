@@ -70,13 +70,17 @@ var (
 	extendedStatsLabels = []string{"type", "vdev", "zpool"}
 )
 
+// ZFS IO statistics don't include histograms of physical disk IO.
+// 'Individual' IO histograms (*_ind_*) are for non-aggregated IO.
+// <cks> has renamed zfs_vdev_size_physical to
+// zfs_vdev_size_individual because of this confusion.
 var (
 	activeQueueLength  = prometheus.NewDesc("zfs_vdev_queue_active_length", "Number of ZIOs issued to disk and waiting to finish", extendedStatsLabels, nil)
 	pendingQueueLength = prometheus.NewDesc("zfs_vdev_queue_pending_length", "Number of ZIOs pending to be issued to disk", extendedStatsLabels, nil)
 	queueLatency       = prometheus.NewDesc("zfs_vdev_queue_latency", "Amount of time an IO request spent in the queue", extendedStatsLabels, nil)
 	zioLatencyTotal    = prometheus.NewDesc("zfs_vdev_zio_latency_total", "Total ZIO latency including queuing and disk access time.", extendedStatsLabels, nil)
 	zioLatencyDisk     = prometheus.NewDesc("zfs_vdev_latency_disk", "Amount of time to read/write the disk", extendedStatsLabels, nil)
-	physicalIOSize     = prometheus.NewDesc("zfs_vdev_io_size_physical", "Size of the physical I/O requests issued", extendedStatsLabels, nil)
+	individualIOSize   = prometheus.NewDesc("zfs_vdev_io_size_individual", "Size of the 'individual' non-aggregated I/O requests issued", extendedStatsLabels, nil)
 	aggregatedIOSize   = prometheus.NewDesc("zfs_vdev_io_size_aggregated", "Size of the aggregated I/O requests issued", extendedStatsLabels, nil)
 )
 
@@ -96,8 +100,8 @@ var extStats = []extStat{
 	{"vdev_agg_trim_histo", aggregatedIOSize, "trim"},
 	{"vdev_async_agg_r_histo", aggregatedIOSize, "async_read"},
 	{"vdev_async_agg_w_histo", aggregatedIOSize, "async_write"},
-	{"vdev_async_ind_r_histo", physicalIOSize, "async_read"},
-	{"vdev_async_ind_w_histo", physicalIOSize, "async_write"},
+	{"vdev_async_ind_r_histo", individualIOSize, "async_read"},
+	{"vdev_async_ind_w_histo", individualIOSize, "async_write"},
 	{"vdev_async_r_active_queue", activeQueueLength, "async_read"},
 	{"vdev_async_r_lat_histo", queueLatency, "async_read"},
 	{"vdev_async_r_pend_queue", pendingQueueLength, "async_read"},
@@ -110,13 +114,13 @@ var extStats = []extStat{
 	{"vdev_async_w_pend_queue", pendingQueueLength, "async_write"},
 	{"vdev_disk_r_lat_histo", zioLatencyDisk, "read"},
 	{"vdev_disk_w_lat_histo", zioLatencyDisk, "write"},
-	{"vdev_ind_scrub_histo", physicalIOSize, "scrub"},
-	{"vdev_ind_trim_histo", physicalIOSize, "trim"},
+	{"vdev_ind_scrub_histo", individualIOSize, "scrub"},
+	{"vdev_ind_trim_histo", individualIOSize, "trim"},
 	{"vdev_scrub_histo", queueLatency, "scrub"},
 	{"vdev_sync_agg_r_histo", aggregatedIOSize, "sync_read"},
 	{"vdev_sync_agg_w_histo", aggregatedIOSize, "sync_write"},
-	{"vdev_sync_ind_r_histo", physicalIOSize, "sync_read"},
-	{"vdev_sync_ind_w_histo", physicalIOSize, "sync_write"},
+	{"vdev_sync_ind_r_histo", individualIOSize, "sync_read"},
+	{"vdev_sync_ind_w_histo", individualIOSize, "sync_write"},
 	{"vdev_sync_r_active_queue", activeQueueLength, "sync_read"},
 	{"vdev_sync_r_lat_histo", queueLatency, "sync_read"},
 	{"vdev_sync_r_pend_queue", pendingQueueLength, "sync_read"},
@@ -159,7 +163,7 @@ func (c *zfsCollector) Describe(ch chan<- *prometheus.Desc) {
 	ch <- queueLatency
 	ch <- zioLatencyTotal
 	ch <- zioLatencyDisk
-	ch <- physicalIOSize
+	ch <- individualIOSize
 	ch <- aggregatedIOSize
 }
 
