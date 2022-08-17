@@ -88,6 +88,9 @@ type extStat struct {
 
 var extStatsMap map[string]extStat
 
+// Extended stats also contain "vdev_slow_ios", but this is the same
+// as a basic vdev statistics field. (Literally; in the kernel code,
+// the basic stat field is copied to the extended stat entry.)
 var extStats = []extStat{
 	{"vdev_agg_scrub_histo", aggregatedIOSize, "scrub"},
 	{"vdev_agg_trim_histo", aggregatedIOSize, "trim"},
