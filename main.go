@@ -115,6 +115,7 @@ var (
 	poolErrors         = prometheus.NewDesc("zfs_pool_errors", "ZFS pool error count", []string{"zpool", "guid"}, nil)
 	poolChildren       = prometheus.NewDesc("zfs_pool_vdevs", "ZFS pool top level vdev count", []string{"zpool", "guid"}, nil)
 	vdevChildren       = prometheus.NewDesc("zfs_vdev_children", "Count of children of a vdev", []string{"vdev", "zpool"}, nil)
+	vdevNparity        = prometheus.NewDesc("zfs_vdev_nparity", "The parity level of a vdev (not always defined)", []string{"vdev", "pool"}, nil)
 
 	// The 'txg' in the root of a pool is apparently the txg of
 	// the most recent configuration change or pool load (eg on
@@ -223,6 +224,7 @@ func (c *zfsCollector) Describe(ch chan<- *prometheus.Desc) {
 	ch <- poolErrors
 	ch <- poolChildren
 	ch <- vdevChildren
+	ch <- vdevNparity
 	ch <- poolConfigTxg
 }
 
@@ -274,6 +276,10 @@ func reportVdevStats(poolName, vdevName string, vdev map[string]interface{}, ch 
 	// on to make the count of children in top-level vdevs inaccurate.)
 	if chld, ok := vdev["children"]; ok {
 		ch <- prometheus.MustNewConstMetric(vdevChildren, prometheus.GaugeValue, float64(len(chld.([]map[string]interface{}))), vdevName, poolName)
+	}
+
+	if nparity, ok := vdev["nparity"]; ok {
+		ch <- prometheus.MustNewConstMetric(vdevNparity, prometheus.GaugeValue, float64(nparity.(uint64)), vdevName, poolName)
 	}
 
 	rawStats := vdev["vdev_stats"].([]uint64)
