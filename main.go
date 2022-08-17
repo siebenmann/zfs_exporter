@@ -6,6 +6,7 @@ import (
 	"log"
 	"math"
 	"net/http"
+	"strconv"
 
 	"git.dolansoft.org/lorenz/go-zfs/ioctl"
 	"github.com/prometheus/client_golang/prometheus"
@@ -104,6 +105,18 @@ var (
 	zioLatencyDisk     = prometheus.NewDesc("zfs_vdev_latency_disk", "Amount of time to read/write the disk", extendedStatsLabels, nil)
 	individualIOSize   = prometheus.NewDesc("zfs_vdev_io_size_individual", "Size of the 'individual' non-aggregated I/O requests issued", extendedStatsLabels, nil)
 	aggregatedIOSize   = prometheus.NewDesc("zfs_vdev_io_size_aggregated", "Size of the aggregated I/O requests issued", extendedStatsLabels, nil)
+	poolLoadTime       = prometheus.NewDesc("zfs_pool_load_time_seconds", "The time when the pool was imported (often at system boot)", []string{"zpool", "guid"}, nil)
+	poolErrors         = prometheus.NewDesc("zfs_pool_errors", "ZFS pool error count", []string{"zpool", "guid"}, nil)
+	poolChildren       = prometheus.NewDesc("zfs_pool_vdevs", "ZFS pool top level vdev count", []string{"zpool", "guid"}, nil)
+	vdevChildren       = prometheus.NewDesc("zfs_vdev_children", "Count of children of a vdev", []string{"vdev", "zpool"}, nil)
+
+	// The 'txg' in the root of a pool is apparently the txg of
+	// the most recent configuration change or pool load (eg on
+	// system reboots). It's probably worth reporting this as a
+	// metric simply so that we can pick up configuration changes,
+	// which I believe may include adding and removing devices to
+	// mirror vdevs.
+	poolConfigTxg = prometheus.NewDesc("zfs_pool_config_txg", "ZFS pool configuration load or change txg", []string{"zpool"}, nil)
 )
 
 type extStat struct {
@@ -200,6 +213,11 @@ func (c *zfsCollector) Describe(ch chan<- *prometheus.Desc) {
 	ch <- zioLatencyDisk
 	ch <- individualIOSize
 	ch <- aggregatedIOSize
+	ch <- poolLoadTime
+	ch <- poolErrors
+	ch <- poolChildren
+	ch <- vdevChildren
+	ch <- poolConfigTxg
 }
 
 func (c *zfsCollector) Collect(ch chan<- prometheus.Metric) {
@@ -212,6 +230,18 @@ func (c *zfsCollector) Collect(ch chan<- prometheus.Metric) {
 		if err != nil {
 			panic(err)
 		}
+
+		// TODO: should the number of children be reported as
+		// a separate metric? Should we report the import
+		// time?
+		// children := stats["vdev_children"].(uint64)
+		guid := strconv.FormatUint(stats["pool_guid"].(uint64), 10)
+		ltimes := stats["initial_load_time"].([]uint64)
+		ch <- prometheus.MustNewConstMetric(poolLoadTime, prometheus.GaugeValue, float64(ltimes[0]), poolName, guid)
+		ch <- prometheus.MustNewConstMetric(poolErrors, prometheus.GaugeValue, float64(stats["error_count"].(uint64)), poolName, guid)
+		ch <- prometheus.MustNewConstMetric(poolChildren, prometheus.GaugeValue, float64(stats["vdev_children"].(uint64)), poolName, guid)
+		ch <- prometheus.MustNewConstMetric(poolConfigTxg, prometheus.GaugeValue, float64(stats["txg"].(uint64)), poolName)
+
 		vdevTree := stats["vdev_tree"].(map[string]interface{})
 		vdevs := vdevTree["children"].([]map[string]interface{})
 		for _, vdev := range vdevs {
