@@ -247,7 +247,7 @@ func (c *zfsCollector) Describe(ch chan<- *prometheus.Desc) {
 // (dRAID is even more complicated.)
 func vdevName(parent string, vdev map[string]interface{}) string {
 	typ := vdev["type"].(string)
-	if typ == "disk" && parent != "" {
+	if (typ == "disk" || typ == "file") && parent != "" {
 		return parent
 	}
 	if parent != "" {
@@ -284,9 +284,10 @@ func reportVdevStats(poolName, vdevName string, vdev map[string]interface{}, ch 
 
 	rawStats := vdev["vdev_stats"].([]uint64)
 	path, ok := vdev["path"].(string)
+	typ := vdev["type"].(string)
 	if !ok {
 		path = ""
-	} else if !*fullPath {
+	} else if !*fullPath && typ != "file" {
 		path = filepath.Base(path)
 	}
 
