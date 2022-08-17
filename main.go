@@ -267,6 +267,15 @@ func vdevName(parent string, vdev map[string]interface{}) string {
 // implicit in its name, eg "mirror-0" is a mirror. Physical disks
 // have the vdev name of their parent vdev.
 func reportVdevStats(poolName, vdevName string, vdev map[string]interface{}, ch chan<- prometheus.Metric) {
+	// Because disk IO stats bubble up from the individual disk devices,
+	// we want to know how many children there are in a given vdev in
+	// some situations. (This is an approximation in some situations,
+	// but usually the vdev hierarchy is flat, without spares and so
+	// on to make the count of children in top-level vdevs inaccurate.)
+	if chld, ok := vdev["children"]; ok {
+		ch <- prometheus.MustNewConstMetric(vdevChildren, prometheus.GaugeValue, float64(len(chld.([]map[string]interface{}))), vdevName, poolName)
+	}
+
 	rawStats := vdev["vdev_stats"].([]uint64)
 	path, ok := vdev["path"].(string)
 	if !ok {
@@ -339,7 +348,6 @@ func descendVdev(poolName, parent string, vdev map[string]interface{}, ch chan<-
 		return
 	}
 	kids := chld.([]map[string]interface{})
-	ch <- prometheus.MustNewConstMetric(vdevChildren, prometheus.GaugeValue, float64(len(kids)), parent, poolName)
 	for _, v := range kids {
 		vdn := vdevName(parent, v)
 		reportVdevStats(poolName, vdn, v, ch)
